@@ -10,16 +10,29 @@ async function getFFmpeg(onProgress?: (p: number) => void): Promise<FFmpeg> {
   ffmpeg = new FFmpeg();
 
   ffmpeg.on('progress', ({ progress }) => {
-    onProgress?.(Math.min(95, progress * 100));
+    onProgress?.(Math.min(95, Math.max(10, progress * 100)));
+  });
+
+  ffmpeg.on('log', ({ message }) => {
+    console.log('[FFmpeg]', message);
   });
 
   const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
 
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-  });
-
+  onProgress?.(3);
+  console.log('[FFmpeg] Downloading core JS...');
+  const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
+  
+  onProgress?.(5);
+  console.log('[FFmpeg] Downloading WASM (~30MB)...');
+  const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
+  
+  onProgress?.(8);
+  console.log('[FFmpeg] Loading engine...');
+  
+  await ffmpeg.load({ coreURL, wasmURL });
+  
+  console.log('[FFmpeg] Engine loaded successfully');
   return ffmpeg;
 }
 
