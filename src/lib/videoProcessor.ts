@@ -7,33 +7,44 @@ let ffmpeg: FFmpeg | null = null;
 async function getFFmpeg(onProgress?: (p: number) => void): Promise<FFmpeg> {
   if (ffmpeg && ffmpeg.loaded) return ffmpeg;
 
-  ffmpeg = new FFmpeg();
+  const instance = new FFmpeg();
 
-  ffmpeg.on('progress', ({ progress }) => {
-    onProgress?.(Math.min(95, Math.max(10, progress * 100)));
+  instance.on('progress', ({ progress }) => {
+    onProgress?.(Math.min(95, Math.max(12, progress * 100)));
   });
 
-  ffmpeg.on('log', ({ message }) => {
+  instance.on('log', ({ message }) => {
     console.log('[FFmpeg]', message);
   });
 
-  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+  // Use jsdelivr - much faster and more reliable than unpkg
+  const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
 
-  onProgress?.(3);
-  console.log('[FFmpeg] Downloading core JS...');
-  const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
-  
-  onProgress?.(5);
-  console.log('[FFmpeg] Downloading WASM (~30MB)...');
-  const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
-  
-  onProgress?.(8);
-  console.log('[FFmpeg] Loading engine...');
-  
-  await ffmpeg.load({ coreURL, wasmURL });
-  
-  console.log('[FFmpeg] Engine loaded successfully');
-  return ffmpeg;
+  try {
+    onProgress?.(3);
+    console.log('[FFmpeg] Downloading core JS...');
+    const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
+    
+    onProgress?.(5);
+    console.log('[FFmpeg] Downloading WASM (this may take a moment on first use)...');
+    const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
+    
+    onProgress?.(9);
+    console.log('[FFmpeg] Initializing engine...');
+    
+    await instance.load({ coreURL, wasmURL });
+    
+    console.log('[FFmpeg] Engine ready!');
+    ffmpeg = instance;
+    return instance;
+  } catch (err) {
+    console.error('[FFmpeg] Failed to load:', err);
+    ffmpeg = null;
+    throw new Error(
+      'Failed to load video engine. Please check your internet connection and try again. ' +
+      '(The first load downloads ~30MB of processing files.)'
+    );
+  }
 }
 
 export async function processVideo(
