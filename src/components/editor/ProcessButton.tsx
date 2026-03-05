@@ -23,9 +23,9 @@ export function ProcessButton({
   onProcess,
   onReset,
 }: ProcessButtonProps) {
-  const allClipsUploaded = clips.every(c => c !== null);
-  const uploadedCount = clips.filter(Boolean).length;
-  const isReady = voiceover && allClipsUploaded && segments.length === 7;
+  const allClipsReady = clips.every(c => c !== null && c.trimRanges.length > 0);
+  const readyCount = clips.filter(c => c !== null && c.trimRanges.length > 0).length;
+  const isReady = voiceover && allClipsReady && segments.length === 7;
 
   return (
     <motion.div
