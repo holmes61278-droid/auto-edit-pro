@@ -28,8 +28,8 @@ export function VideoUpload({ clips, segments, onUpload, onUpdateTrim }: VideoUp
             key={i}
             index={i}
             label={label}
-            clip={clips[i]}
-            segment={segments[i]}
+            clip={clips[i] ?? null}
+            segment={segments?.[i]}
             onUpload={onUpload}
             onUpdateTrim={onUpdateTrim}
           />
