@@ -1,17 +1,17 @@
 import { useCallback, useRef, useState } from 'react';
-import { Upload, Film, Check, X, Scissors } from 'lucide-react';
+import { Film, Check, X, Scissors } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ProductClip, CLIP_LABELS, Segment } from '@/types/editor';
+import { ProductClip, CLIP_LABELS, Segment, TrimRange } from '@/types/editor';
 import { VideoTrimmer } from './VideoTrimmer';
 
 interface VideoUploadProps {
   clips: (ProductClip | null)[];
   segments: Segment[];
   onUpload: (index: number, clip: ProductClip | null) => void;
-  onUpdateTrim: (index: number, trimStart: number, trimEnd: number) => void;
+  onUpdateTrimRanges: (index: number, trimRanges: TrimRange[]) => void;
 }
 
-export function VideoUpload({ clips, segments, onUpload, onUpdateTrim }: VideoUploadProps) {
+export function VideoUpload({ clips, segments, onUpload, onUpdateTrimRanges }: VideoUploadProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -31,7 +31,7 @@ export function VideoUpload({ clips, segments, onUpload, onUpdateTrim }: VideoUp
             clip={clips[i] ?? null}
             segment={segments?.[i]}
             onUpload={onUpload}
-            onUpdateTrim={onUpdateTrim}
+            onUpdateTrimRanges={onUpdateTrimRanges}
           />
         ))}
       </div>
@@ -45,14 +45,14 @@ function ClipSlot({
   clip,
   segment,
   onUpload,
-  onUpdateTrim,
+  onUpdateTrimRanges,
 }: {
   index: number;
   label: string;
   clip: ProductClip | null;
   segment: Segment | undefined;
   onUpload: (index: number, clip: ProductClip | null) => void;
-  onUpdateTrim: (index: number, trimStart: number, trimEnd: number) => void;
+  onUpdateTrimRanges: (index: number, trimRanges: TrimRange[]) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [showTrimmer, setShowTrimmer] = useState(false);
@@ -60,58 +60,48 @@ function ClipSlot({
 
   const segmentDuration = segment ? segment.endTime - segment.startTime : 0;
 
-  const handleFile = useCallback(
-    (file: File) => {
-      const url = URL.createObjectURL(file);
-      const video = document.createElement('video');
-      video.preload = 'metadata';
-      video.onloadedmetadata = () => {
-        setPendingFile({ file, url, duration: video.duration });
-        setShowTrimmer(true);
-      };
-      video.src = url;
-    },
-    []
-  );
+  const handleFile = useCallback((file: File) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      setPendingFile({ file, url, duration: video.duration });
+      setShowTrimmer(true);
+    };
+    video.src = url;
+  }, []);
 
-  const handleTrimConfirm = useCallback(
-    (trimStart: number, trimEnd: number) => {
-      if (!pendingFile) return;
-      // Generate thumbnail
-      const video = document.createElement('video');
-      video.preload = 'metadata';
-      video.onloadedmetadata = () => {
-        video.currentTime = trimStart + 0.5;
-        video.onseeked = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = 160;
-          canvas.height = 90;
-          const ctx = canvas.getContext('2d')!;
-          ctx.drawImage(video, 0, 0, 160, 90);
-          const thumbnail = canvas.toDataURL('image/jpeg', 0.7);
-          onUpload(index, {
-            id: `clip-${index}`,
-            file: pendingFile.file,
-            url: pendingFile.url,
-            duration: pendingFile.duration,
-            index,
-            thumbnail,
-            trimStart,
-            trimEnd,
-          });
-          setShowTrimmer(false);
-          setPendingFile(null);
-        };
+  const handleTrimConfirm = useCallback((trimRanges: TrimRange[]) => {
+    if (!pendingFile) return;
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      video.currentTime = trimRanges[0].start + 0.5;
+      video.onseeked = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 160;
+        canvas.height = 90;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(video, 0, 0, 160, 90);
+        const thumbnail = canvas.toDataURL('image/jpeg', 0.7);
+        onUpload(index, {
+          id: `clip-${index}`,
+          file: pendingFile.file,
+          url: pendingFile.url,
+          duration: pendingFile.duration,
+          index,
+          thumbnail,
+          trimRanges,
+        });
+        setShowTrimmer(false);
+        setPendingFile(null);
       };
-      video.src = pendingFile.url;
-    },
-    [index, onUpload, pendingFile]
-  );
+    };
+    video.src = pendingFile.url;
+  }, [index, onUpload, pendingFile]);
 
   const handleTrimCancel = useCallback(() => {
-    if (pendingFile) {
-      URL.revokeObjectURL(pendingFile.url);
-    }
+    if (pendingFile) URL.revokeObjectURL(pendingFile.url);
     setShowTrimmer(false);
     setPendingFile(null);
   }, [pendingFile]);
@@ -122,16 +112,13 @@ function ClipSlot({
     setShowTrimmer(true);
   }, [clip]);
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      const file = e.dataTransfer.files[0];
-      if (file && file.type.startsWith('video/')) handleFile(file);
-    },
-    [handleFile]
-  );
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('video/')) handleFile(file);
+  }, [handleFile]);
 
-  const trimmedDuration = clip ? clip.trimEnd - clip.trimStart : 0;
+  const totalTrimmed = clip ? clip.trimRanges.reduce((s, r) => s + (r.end - r.start), 0) : 0;
 
   return (
     <>
@@ -140,9 +127,7 @@ function ClipSlot({
         onDrop={handleDrop}
         onClick={() => !clip && inputRef.current?.click()}
         className={`relative aspect-[9/16] cursor-pointer rounded-md border-2 border-dashed transition-all overflow-hidden ${
-          clip
-            ? 'border-primary/30 bg-primary/5'
-            : 'border-border hover:border-primary/40 hover:bg-secondary/30'
+          clip ? 'border-primary/30 bg-primary/5' : 'border-border hover:border-primary/40 hover:bg-secondary/30'
         }`}
       >
         <input
@@ -159,23 +144,16 @@ function ClipSlot({
         {clip ? (
           <>
             {clip.thumbnail && (
-              <img
-                src={clip.thumbnail}
-                alt={label}
-                className="absolute inset-0 h-full w-full object-cover opacity-50"
-              />
+              <img src={clip.thumbnail} alt={label} className="absolute inset-0 h-full w-full object-cover opacity-50" />
             )}
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/50 gap-1">
               <Check className="h-3.5 w-3.5 text-primary" />
               <p className="text-[9px] font-mono text-foreground font-medium">{label}</p>
               <p className="text-[8px] font-mono text-muted-foreground">
-                {trimmedDuration.toFixed(1)}s trimmed
+                {clip.trimRanges.length} cut{clip.trimRanges.length > 1 ? 's' : ''} · {totalTrimmed.toFixed(1)}s
               </p>
               <button
-                onClick={e => {
-                  e.stopPropagation();
-                  handleRetrim();
-                }}
+                onClick={e => { e.stopPropagation(); handleRetrim(); }}
                 className="mt-1 flex items-center gap-0.5 rounded bg-secondary/80 px-1.5 py-0.5 text-[8px] font-mono text-secondary-foreground hover:bg-secondary transition-colors"
               >
                 <Scissors className="h-2.5 w-2.5" />
@@ -183,11 +161,7 @@ function ClipSlot({
               </button>
             </div>
             <button
-              onClick={e => {
-                e.stopPropagation();
-                URL.revokeObjectURL(clip.url);
-                onUpload(index, null);
-              }}
+              onClick={e => { e.stopPropagation(); URL.revokeObjectURL(clip.url); onUpload(index, null); }}
               className="absolute top-1 right-1 rounded-full bg-background/80 p-0.5 text-muted-foreground hover:text-destructive transition-colors"
             >
               <X className="h-2.5 w-2.5" />
@@ -209,8 +183,7 @@ function ClipSlot({
           <VideoTrimmer
             videoUrl={pendingFile.url}
             videoDuration={pendingFile.duration}
-            trimStart={clip?.trimStart ?? 0}
-            trimEnd={clip?.trimEnd ?? Math.min(pendingFile.duration, segmentDuration || pendingFile.duration)}
+            initialRanges={clip?.trimRanges ?? []}
             segmentDuration={segmentDuration}
             label={label}
             onConfirm={handleTrimConfirm}

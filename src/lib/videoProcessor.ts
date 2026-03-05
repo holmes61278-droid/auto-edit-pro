@@ -52,49 +52,76 @@ export async function processVideo(
   await ff.writeFile('voiceover.mp3', await fetchFile(voiceover));
   onProgress(15);
 
-  // Write all 7 clips
+  // Write all clip files
   for (let i = 0; i < clips.length; i++) {
     await ff.writeFile(`clip${i}.mp4`, await fetchFile(clips[i].file));
     onProgress(15 + (i + 1) * 3);
   }
 
-  // For each segment, extract the trimmed portion from its corresponding clip
+  // For each segment, extract multiple trimmed ranges, concat them, then speed-adjust
   const segmentFiles: string[] = [];
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
     const segDuration = seg.endTime - seg.startTime;
-    const clip = clips[i]; // Each segment now has its own clip (index 0-6)
-    const outputName = `seg${i}.mp4`;
+    const clip = clips[i];
+    const ranges = clip.trimRanges;
 
-    // Use the manual trim values from the clip
-    const trimStart = clip.trimStart;
-    const trimDuration = clip.trimEnd - clip.trimStart;
+    // Extract each range as a separate file
+    const rangeParts: string[] = [];
+    for (let r = 0; r < ranges.length; r++) {
+      const range = ranges[r];
+      const partName = `seg${i}_part${r}.mp4`;
+      const partDuration = range.end - range.start;
 
-    // Extract the trimmed portion, then speed-adjust to fit the segment duration
-    // If trimmed portion differs from segment duration, we adjust speed
-    const speedFactor = trimDuration / segDuration;
-
-    if (Math.abs(speedFactor - 1) < 0.05) {
-      // Close enough to 1:1, just cut directly
       await ff.exec([
-        '-ss', trimStart.toFixed(3),
+        '-ss', range.start.toFixed(3),
         '-i', `clip${i}.mp4`,
-        '-t', segDuration.toFixed(3),
+        '-t', partDuration.toFixed(3),
         '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
         '-an',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
+        '-y', partName,
+      ]);
+      rangeParts.push(partName);
+    }
+
+    // Concat the range parts if multiple
+    let concatenatedFile: string;
+    if (rangeParts.length === 1) {
+      concatenatedFile = rangeParts[0];
+    } else {
+      const concatList = rangeParts.map(f => `file '${f}'`).join('\n');
+      await ff.writeFile(`seg${i}_concat.txt`, concatList);
+      concatenatedFile = `seg${i}_concat.mp4`;
+      await ff.exec([
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', `seg${i}_concat.txt`,
+        '-c', 'copy',
+        '-y', concatenatedFile,
+      ]);
+    }
+
+    // Calculate total selected duration and speed factor
+    const totalSelected = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
+    const speedFactor = totalSelected / segDuration;
+    const outputName = `seg${i}.mp4`;
+
+    if (Math.abs(speedFactor - 1) < 0.05) {
+      // Close enough, just rename/copy
+      await ff.exec([
+        '-i', concatenatedFile,
+        '-c', 'copy',
         '-y', outputName,
       ]);
     } else {
-      // Speed adjust: setpts to fit trimmed content into segment duration
+      // Speed adjust using setpts
       const setptsValue = (1 / speedFactor).toFixed(4);
       await ff.exec([
-        '-ss', trimStart.toFixed(3),
-        '-i', `clip${i}.mp4`,
-        '-t', trimDuration.toFixed(3),
-        '-vf', `setpts=${setptsValue}*PTS,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2`,
+        '-i', concatenatedFile,
+        '-vf', `setpts=${setptsValue}*PTS`,
         '-an',
         '-c:v', 'libx264',
         '-preset', 'ultrafast',
@@ -106,7 +133,7 @@ export async function processVideo(
     onProgress(36 + i * 7);
   }
 
-  // Create concat file
+  // Create final concat file
   const concatContent = segmentFiles.map(f => `file '${f}'`).join('\n');
   await ff.writeFile('concat.txt', concatContent);
 

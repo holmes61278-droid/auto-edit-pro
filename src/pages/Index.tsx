@@ -15,7 +15,7 @@ const Index = () => {
     state,
     setVoiceover,
     setProductClip,
-    updateClipTrim,
+    updateClipTrimRanges,
     updateSegment,
     setProcessing,
     setProgress,
@@ -60,7 +60,7 @@ const Index = () => {
             clips={state.productClips}
             segments={state.segments}
             onUpload={setProductClip}
-            onUpdateTrim={updateClipTrim}
+            onUpdateTrimRanges={updateClipTrimRanges}
           />
 
           <Timeline
