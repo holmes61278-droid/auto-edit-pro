@@ -1,11 +1,11 @@
 import { useState, useCallback } from 'react';
-import { EditorState, Segment, ProductClip, DEFAULT_SEGMENTS } from '@/types/editor';
+import { EditorState, Segment, ProductClip, TrimRange, DEFAULT_SEGMENTS } from '@/types/editor';
 
 const initialState: EditorState = {
   voiceover: null,
   voiceoverUrl: null,
   voiceoverDuration: 0,
-  productClips: [null, null, null, null, null, null, null], // 7 slots: hook + 5 products + CTA
+  productClips: [null, null, null, null, null, null, null],
   segments: [],
   isProcessing: false,
   progress: 0,
@@ -41,12 +41,12 @@ export function useEditorState() {
     });
   }, []);
 
-  const updateClipTrim = useCallback((index: number, trimStart: number, trimEnd: number) => {
+  const updateClipTrimRanges = useCallback((index: number, trimRanges: TrimRange[]) => {
     setState(prev => {
       const clips = [...prev.productClips];
       const clip = clips[index];
       if (!clip) return prev;
-      clips[index] = { ...clip, trimStart, trimEnd };
+      clips[index] = { ...clip, trimRanges };
       return { ...prev, productClips: clips, outputUrl: null };
     });
   }, []);
@@ -82,7 +82,7 @@ export function useEditorState() {
     state,
     setVoiceover,
     setProductClip,
-    updateClipTrim,
+    updateClipTrimRanges,
     updateSegment,
     setProcessing,
     setProgress,

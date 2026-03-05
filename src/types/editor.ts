@@ -7,6 +7,11 @@ export interface Segment {
   endTime: number; // seconds
 }
 
+export interface TrimRange {
+  start: number;
+  end: number;
+}
+
 export interface ProductClip {
   id: string;
   file: File;
@@ -14,8 +19,7 @@ export interface ProductClip {
   duration: number;
   index: number; // 0-6 (hook=0, products=1-5, cta=6)
   thumbnail?: string;
-  trimStart: number; // manual trim start in seconds
-  trimEnd: number; // manual trim end in seconds
+  trimRanges: TrimRange[]; // multiple selected ranges
 }
 
 export interface EditorState {
