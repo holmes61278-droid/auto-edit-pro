@@ -3,6 +3,12 @@ import { Play, Pause, Check, X, Plus, Trash2 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { TrimRange } from '@/types/editor';
 
+interface VideoSource {
+  url: string;
+  duration: number;
+  label: string;
+}
+
 interface VideoTrimmerProps {
   videoUrl: string;
   videoDuration: number;
@@ -11,6 +17,7 @@ interface VideoTrimmerProps {
   label: string;
   onConfirm: (ranges: TrimRange[]) => void;
   onCancel: () => void;
+  multiSource?: VideoSource[]; // for hook/cta: all product videos
 }
 
 export function VideoTrimmer({
@@ -21,20 +28,38 @@ export function VideoTrimmer({
   label,
   onConfirm,
   onCancel,
+  multiSource,
 }: VideoTrimmerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+
+  // Multi-source: track which source is active
+  const isMulti = !!multiSource && multiSource.length > 0;
+  const [activeSourceIndex, setActiveSourceIndex] = useState(0);
+
+  const currentSource = isMulti ? multiSource![activeSourceIndex] : { url: videoUrl, duration: videoDuration, label };
+  const currentUrl = currentSource.url;
+  const currentDuration = currentSource.duration;
+
   const [ranges, setRanges] = useState<TrimRange[]>(
-    initialRanges.length > 0 ? initialRanges : [{ start: 0, end: Math.min(videoDuration, segmentDuration || videoDuration) }]
+    initialRanges.length > 0
+      ? initialRanges
+      : [{ start: 0, end: Math.min(currentDuration, segmentDuration || currentDuration), sourceIndex: isMulti ? 0 : undefined }]
   );
   const [dragging, setDragging] = useState<{ rangeIndex: number; edge: 'start' | 'end' } | null>(null);
   const [activeRange, setActiveRange] = useState(0);
 
   const totalSelected = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
-  const speedFactor = totalSelected / segmentDuration;
-  const speedLabel = speedFactor > 1 ? `${speedFactor.toFixed(2)}x faster` : speedFactor < 1 ? `${(1/speedFactor).toFixed(2)}x slower` : '1x';
+  const speedFactor = segmentDuration > 0 ? totalSelected / segmentDuration : 1;
+  const speedLabel = speedFactor > 1.02 ? `${speedFactor.toFixed(2)}x faster` : speedFactor < 0.98 ? `${(1/speedFactor).toFixed(2)}x slower` : '1x';
+
+  // Ranges for currently visible source
+  const visibleRangeIndices = ranges.map((r, i) => i).filter(i => {
+    if (!isMulti) return true;
+    return ranges[i].sourceIndex === activeSourceIndex;
+  });
 
   // Sync video time
   useEffect(() => {
@@ -50,6 +75,17 @@ export function VideoTrimmer({
     };
   }, []);
 
+  // When switching sources, update video src
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.pause();
+    setIsPlaying(false);
+    video.src = currentUrl;
+    video.currentTime = 0;
+    setCurrentTime(0);
+  }, [currentUrl]);
+
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -61,76 +97,53 @@ export function VideoTrimmer({
     setIsPlaying(!isPlaying);
   }, [isPlaying]);
 
-  const timeToPercent = (t: number) => (t / videoDuration) * 100;
+  const timeToPercent = (t: number) => (t / currentDuration) * 100;
 
   const handleTrackClick = useCallback((e: React.MouseEvent) => {
     if (dragging) return;
     const rect = trackRef.current?.getBoundingClientRect();
     if (!rect || !videoRef.current) return;
     const x = (e.clientX - rect.left) / rect.width;
-    const time = Math.max(0, Math.min(videoDuration, x * videoDuration));
+    const time = Math.max(0, Math.min(currentDuration, x * currentDuration));
     videoRef.current.currentTime = time;
     setCurrentTime(time);
-  }, [videoDuration, dragging]);
+  }, [currentDuration, dragging]);
 
-  // Add a new range at a gap
   const addRange = useCallback(() => {
-    // Find the largest gap
-    const sorted = [...ranges].sort((a, b) => a.start - b.start);
-    let bestStart = 0;
-    let bestEnd = 0;
-    let bestLen = 0;
+    // Find largest gap in current source's ranges
+    const sourceRanges = ranges.filter(r => !isMulti || r.sourceIndex === activeSourceIndex).sort((a, b) => a.start - b.start);
+    let bestStart = 0, bestEnd = 0, bestLen = 0;
 
-    // Check gap before first range
-    if (sorted.length === 0 || sorted[0].start > 0) {
-      const gapEnd = sorted.length > 0 ? sorted[0].start : videoDuration;
-      if (gapEnd > bestLen) {
-        bestStart = 0;
-        bestEnd = gapEnd;
-        bestLen = gapEnd;
-      }
+    if (sourceRanges.length === 0 || sourceRanges[0].start > 0) {
+      const gapEnd = sourceRanges.length > 0 ? sourceRanges[0].start : currentDuration;
+      if (gapEnd > bestLen) { bestStart = 0; bestEnd = gapEnd; bestLen = gapEnd; }
+    }
+    for (let i = 0; i < sourceRanges.length - 1; i++) {
+      const gapLen = sourceRanges[i + 1].start - sourceRanges[i].end;
+      if (gapLen > bestLen) { bestStart = sourceRanges[i].end; bestEnd = sourceRanges[i + 1].start; bestLen = gapLen; }
+    }
+    if (sourceRanges.length > 0) {
+      const lastEnd = sourceRanges[sourceRanges.length - 1].end;
+      const gapLen = currentDuration - lastEnd;
+      if (gapLen > bestLen) { bestStart = lastEnd; bestEnd = currentDuration; bestLen = gapLen; }
     }
 
-    // Check gaps between ranges
-    for (let i = 0; i < sorted.length - 1; i++) {
-      const gapStart = sorted[i].end;
-      const gapEnd = sorted[i + 1].start;
-      const gapLen = gapEnd - gapStart;
-      if (gapLen > bestLen) {
-        bestStart = gapStart;
-        bestEnd = gapEnd;
-        bestLen = gapLen;
-      }
-    }
+    if (bestLen < 0.5) return;
 
-    // Check gap after last range
-    if (sorted.length > 0) {
-      const lastEnd = sorted[sorted.length - 1].end;
-      const gapLen = videoDuration - lastEnd;
-      if (gapLen > bestLen) {
-        bestStart = lastEnd;
-        bestEnd = videoDuration;
-        bestLen = gapLen;
-      }
-    }
-
-    if (bestLen < 0.5) return; // No space
-
-    // Place new range in the middle of the gap, ~2s or gap size
     const rangeSize = Math.min(bestLen, 2);
     const center = (bestStart + bestEnd) / 2;
     const newRange: TrimRange = {
       start: Math.max(bestStart, center - rangeSize / 2),
       end: Math.min(bestEnd, center + rangeSize / 2),
+      sourceIndex: isMulti ? activeSourceIndex : undefined,
     };
 
-    const newRanges = [...ranges, newRange].sort((a, b) => a.start - b.start);
+    const newRanges = [...ranges, newRange];
     setRanges(newRanges);
-    setActiveRange(newRanges.indexOf(newRange));
-  }, [ranges, videoDuration]);
+    setActiveRange(newRanges.length - 1);
+  }, [ranges, currentDuration, isMulti, activeSourceIndex]);
 
   const removeRange = useCallback((index: number) => {
-    if (ranges.length <= 1) return;
     const newRanges = ranges.filter((_, i) => i !== index);
     setRanges(newRanges);
     setActiveRange(Math.min(activeRange, newRanges.length - 1));
@@ -143,22 +156,25 @@ export function VideoTrimmer({
       const rect = trackRef.current?.getBoundingClientRect();
       if (!rect) return;
       const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const time = x * videoDuration;
+      const time = x * currentDuration;
       const { rangeIndex, edge } = dragging;
 
       setRanges(prev => {
         const newRanges = [...prev];
         const range = { ...newRanges[rangeIndex] };
 
-        // Get boundaries from adjacent ranges
-        const sorted = [...newRanges].sort((a, b) => a.start - b.start);
-        const sortedIdx = sorted.findIndex(r => r === newRanges[rangeIndex]);
+        // Get same-source ranges sorted
+        const sameSource = newRanges
+          .map((r, i) => ({ ...r, idx: i }))
+          .filter(r => !isMulti || r.sourceIndex === range.sourceIndex)
+          .sort((a, b) => a.start - b.start);
+        const sortedIdx = sameSource.findIndex(r => r.idx === rangeIndex);
 
         if (edge === 'start') {
-          const minStart = sortedIdx > 0 ? sorted[sortedIdx - 1].end : 0;
+          const minStart = sortedIdx > 0 ? sameSource[sortedIdx - 1].end : 0;
           range.start = Math.max(minStart, Math.min(time, range.end - 0.3));
         } else {
-          const maxEnd = sortedIdx < sorted.length - 1 ? sorted[sortedIdx + 1].start : videoDuration;
+          const maxEnd = sortedIdx < sameSource.length - 1 ? sameSource[sortedIdx + 1].start : currentDuration;
           range.end = Math.min(maxEnd, Math.max(time, range.start + 0.3));
         }
 
@@ -173,13 +189,17 @@ export function VideoTrimmer({
       window.removeEventListener('mousemove', handleMove);
       window.removeEventListener('mouseup', handleUp);
     };
-  }, [dragging, videoDuration]);
+  }, [dragging, currentDuration, isMulti]);
 
-  // Seek video when active range changes
   useEffect(() => {
     if (videoRef.current && !isPlaying && ranges[activeRange]) {
-      videoRef.current.currentTime = ranges[activeRange].start;
-      setCurrentTime(ranges[activeRange].start);
+      const r = ranges[activeRange];
+      // Switch source if needed
+      if (isMulti && r.sourceIndex !== undefined && r.sourceIndex !== activeSourceIndex) {
+        setActiveSourceIndex(r.sourceIndex);
+      }
+      videoRef.current.currentTime = r.start;
+      setCurrentTime(r.start);
     }
   }, [activeRange]);
 
@@ -192,7 +212,7 @@ export function VideoTrimmer({
       onClick={onCancel}
     >
       <div
-        className="w-full max-w-3xl rounded-xl bg-card border border-border p-5 space-y-4 shadow-2xl"
+        className="w-full max-w-3xl rounded-xl bg-card border border-border p-5 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
@@ -204,11 +224,33 @@ export function VideoTrimmer({
           </button>
         </div>
 
+        {/* Source tabs for multi-source */}
+        {isMulti && (
+          <div className="flex gap-1 flex-wrap">
+            {multiSource!.map((src, i) => {
+              const count = ranges.filter(r => r.sourceIndex === i).length;
+              return (
+                <button
+                  key={i}
+                  onClick={() => setActiveSourceIndex(i)}
+                  className={`px-2.5 py-1 rounded-md text-[10px] font-mono transition-all border ${
+                    i === activeSourceIndex
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-secondary text-secondary-foreground border-transparent hover:border-border'
+                  }`}
+                >
+                  {src.label} {count > 0 && `(${count})`}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* Video preview */}
         <div className="relative rounded-lg overflow-hidden bg-background aspect-video">
           <video
             ref={videoRef}
-            src={videoUrl}
+            src={currentUrl}
             className="w-full h-full object-contain"
             playsInline
             muted
@@ -224,71 +266,70 @@ export function VideoTrimmer({
             {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 ml-0.5" />}
           </button>
           <span className="text-xs font-mono text-muted-foreground">
-            {formatTime(currentTime)} / {formatTime(videoDuration)}
+            {formatTime(currentTime)} / {formatTime(currentDuration)}
           </span>
           <div className="flex-1" />
           <span className="text-xs font-mono text-muted-foreground">
             Selected: <span className={totalSelected > 0 ? 'text-foreground' : 'text-destructive'}>{totalSelected.toFixed(1)}s</span>
           </span>
-          <span className="text-xs font-mono text-muted-foreground">
-            Need: <span className="text-primary">{segmentDuration.toFixed(1)}s</span>
-          </span>
-          <span className="text-xs font-mono px-2 py-0.5 rounded bg-secondary text-secondary-foreground">
-            {speedLabel}
-          </span>
+          {segmentDuration > 0 && (
+            <>
+              <span className="text-xs font-mono text-muted-foreground">
+                Need: <span className="text-primary">{segmentDuration.toFixed(1)}s</span>
+              </span>
+              <span className="text-xs font-mono px-2 py-0.5 rounded bg-secondary text-secondary-foreground">
+                {speedLabel}
+              </span>
+            </>
+          )}
         </div>
 
-        {/* Multi-range track */}
+        {/* Timeline track for current source */}
         <div
           ref={trackRef}
           onClick={handleTrackClick}
           className="relative h-14 rounded-lg bg-muted/30 border border-border cursor-crosshair select-none overflow-hidden"
         >
-          {/* Ranges */}
-          {ranges.map((range, i) => (
-            <div key={i}>
-              {/* Range fill */}
-              <div
-                className={`absolute top-0 h-full transition-colors ${
-                  i === activeRange ? 'bg-primary/30 border-y-2 border-primary' : 'bg-primary/15 border-y border-primary/40'
-                }`}
-                style={{
-                  left: `${timeToPercent(range.start)}%`,
-                  width: `${timeToPercent(range.end) - timeToPercent(range.start)}%`,
-                }}
-                onClick={(e) => { e.stopPropagation(); setActiveRange(i); }}
-              />
-
-              {/* Start handle */}
-              <div
-                onMouseDown={e => { e.stopPropagation(); setDragging({ rangeIndex: i, edge: 'start' }); setActiveRange(i); }}
-                className="absolute top-0 h-full w-3 cursor-col-resize z-10 group"
-                style={{ left: `${timeToPercent(range.start)}%`, transform: 'translateX(-50%)' }}
-              >
-                <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-1 bg-primary rounded-full group-hover:w-1.5 transition-all" />
+          {visibleRangeIndices.map(ri => {
+            const range = ranges[ri];
+            return (
+              <div key={ri}>
+                <div
+                  className={`absolute top-0 h-full transition-colors ${
+                    ri === activeRange ? 'bg-primary/30 border-y-2 border-primary' : 'bg-primary/15 border-y border-primary/40'
+                  }`}
+                  style={{
+                    left: `${timeToPercent(range.start)}%`,
+                    width: `${timeToPercent(range.end) - timeToPercent(range.start)}%`,
+                  }}
+                  onClick={(e) => { e.stopPropagation(); setActiveRange(ri); }}
+                />
+                <div
+                  onMouseDown={e => { e.stopPropagation(); setDragging({ rangeIndex: ri, edge: 'start' }); setActiveRange(ri); }}
+                  className="absolute top-0 h-full w-3 cursor-col-resize z-10 group"
+                  style={{ left: `${timeToPercent(range.start)}%`, transform: 'translateX(-50%)' }}
+                >
+                  <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-1 bg-primary rounded-full group-hover:w-1.5 transition-all" />
+                </div>
+                <div
+                  onMouseDown={e => { e.stopPropagation(); setDragging({ rangeIndex: ri, edge: 'end' }); setActiveRange(ri); }}
+                  className="absolute top-0 h-full w-3 cursor-col-resize z-10 group"
+                  style={{ left: `${timeToPercent(range.end)}%`, transform: 'translateX(-50%)' }}
+                >
+                  <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-1 bg-primary rounded-full group-hover:w-1.5 transition-all" />
+                </div>
+                <div
+                  className="absolute top-1 text-[8px] font-mono text-primary-foreground bg-primary/60 px-1 rounded pointer-events-none"
+                  style={{
+                    left: `${timeToPercent(range.start) + (timeToPercent(range.end) - timeToPercent(range.start)) / 2}%`,
+                    transform: 'translateX(-50%)',
+                  }}
+                >
+                  {(range.end - range.start).toFixed(1)}s
+                </div>
               </div>
-
-              {/* End handle */}
-              <div
-                onMouseDown={e => { e.stopPropagation(); setDragging({ rangeIndex: i, edge: 'end' }); setActiveRange(i); }}
-                className="absolute top-0 h-full w-3 cursor-col-resize z-10 group"
-                style={{ left: `${timeToPercent(range.end)}%`, transform: 'translateX(-50%)' }}
-              >
-                <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-1 bg-primary rounded-full group-hover:w-1.5 transition-all" />
-              </div>
-
-              {/* Range label */}
-              <div
-                className="absolute top-1 text-[8px] font-mono text-primary-foreground bg-primary/60 px-1 rounded pointer-events-none"
-                style={{
-                  left: `${timeToPercent(range.start) + (timeToPercent(range.end) - timeToPercent(range.start)) / 2}%`,
-                  transform: 'translateX(-50%)',
-                }}
-              >
-                {(range.end - range.start).toFixed(1)}s
-              </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* Playhead */}
           <div
@@ -298,32 +339,35 @@ export function VideoTrimmer({
             <div className="absolute -top-0 left-1/2 -translate-x-1/2 w-2 h-2 bg-foreground rounded-full" />
           </div>
 
-          {/* Time markers */}
           <div className="absolute bottom-0.5 left-1 text-[8px] font-mono text-muted-foreground">0:00</div>
-          <div className="absolute bottom-0.5 right-1 text-[8px] font-mono text-muted-foreground">{formatTime(videoDuration)}</div>
+          <div className="absolute bottom-0.5 right-1 text-[8px] font-mono text-muted-foreground">{formatTime(currentDuration)}</div>
         </div>
 
-        {/* Range list + add button */}
+        {/* Range list */}
         <div className="flex items-center gap-2 flex-wrap">
           {ranges.map((range, i) => (
             <div
               key={i}
-              onClick={() => setActiveRange(i)}
+              onClick={() => {
+                setActiveRange(i);
+                if (isMulti && range.sourceIndex !== undefined) setActiveSourceIndex(range.sourceIndex);
+              }}
               className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-mono cursor-pointer transition-all ${
                 i === activeRange
                   ? 'bg-primary/20 text-primary border border-primary/40'
                   : 'bg-secondary text-secondary-foreground border border-transparent hover:border-border'
               }`}
             >
-              <span>{formatTime(range.start)} → {formatTime(range.end)}</span>
-              {ranges.length > 1 && (
-                <button
-                  onClick={(e) => { e.stopPropagation(); removeRange(i); }}
-                  className="text-muted-foreground hover:text-destructive transition-colors"
-                >
-                  <Trash2 className="h-2.5 w-2.5" />
-                </button>
+              {isMulti && range.sourceIndex !== undefined && (
+                <span className="text-muted-foreground">P{range.sourceIndex + 1}</span>
               )}
+              <span>{formatTime(range.start)} → {formatTime(range.end)}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); removeRange(i); }}
+                className="text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <Trash2 className="h-2.5 w-2.5" />
+              </button>
             </div>
           ))}
           <button
@@ -336,7 +380,10 @@ export function VideoTrimmer({
         </div>
 
         <p className="text-[11px] text-muted-foreground">
-          Select multiple parts of the video you like. The combined clips will be speed-adjusted to fill the {segmentDuration.toFixed(1)}s segment.
+          {isMulti
+            ? `Select parts from any product video. Combined clips will be speed-adjusted to fill the ${segmentDuration.toFixed(1)}s segment.`
+            : `Select multiple parts of the video you like. The combined clips will be speed-adjusted to fill the ${segmentDuration.toFixed(1)}s segment.`
+          }
         </p>
 
         {/* Actions */}
@@ -348,8 +395,9 @@ export function VideoTrimmer({
             Cancel
           </button>
           <button
-            onClick={() => onConfirm(ranges)}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90 transition-all"
+            onClick={() => ranges.length > 0 && onConfirm(ranges)}
+            disabled={ranges.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground hover:opacity-90 transition-all disabled:opacity-50"
           >
             <Check className="h-3.5 w-3.5" />
             Confirm Trim

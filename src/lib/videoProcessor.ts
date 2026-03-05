@@ -52,13 +52,17 @@ export async function processVideo(
   await ff.writeFile('voiceover.mp3', await fetchFile(voiceover));
   onProgress(15);
 
-  // Write all clip files
+  // Write all unique clip files (products are indices 1-5, hook/cta reference them via sourceIndex)
+  const writtenFiles = new Set<string>();
   for (let i = 0; i < clips.length; i++) {
-    await ff.writeFile(`clip${i}.mp4`, await fetchFile(clips[i].file));
+    const fileName = `clip${i}.mp4`;
+    if (!writtenFiles.has(fileName)) {
+      await ff.writeFile(fileName, await fetchFile(clips[i].file));
+      writtenFiles.add(fileName);
+    }
     onProgress(15 + (i + 1) * 3);
   }
 
-  // For each segment, extract multiple trimmed ranges, concat them, then speed-adjust
   const segmentFiles: string[] = [];
 
   for (let i = 0; i < segments.length; i++) {
@@ -67,16 +71,26 @@ export async function processVideo(
     const clip = clips[i];
     const ranges = clip.trimRanges;
 
-    // Extract each range as a separate file
+    if (ranges.length === 0) continue;
+
+    // Extract each range
     const rangeParts: string[] = [];
     for (let r = 0; r < ranges.length; r++) {
       const range = ranges[r];
       const partName = `seg${i}_part${r}.mp4`;
       const partDuration = range.end - range.start;
 
+      // Determine source file: for hook/cta with sourceIndex, use the product clip file
+      let sourceFile = `clip${i}.mp4`;
+      if (range.sourceIndex !== undefined) {
+        // sourceIndex is 0-4 (product index), maps to clip index 1-5
+        const productClipIndex = range.sourceIndex + 1;
+        sourceFile = `clip${productClipIndex}.mp4`;
+      }
+
       await ff.exec([
         '-ss', range.start.toFixed(3),
-        '-i', `clip${i}.mp4`,
+        '-i', sourceFile,
         '-t', partDuration.toFixed(3),
         '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
         '-an',
@@ -87,7 +101,7 @@ export async function processVideo(
       rangeParts.push(partName);
     }
 
-    // Concat the range parts if multiple
+    // Concat parts if multiple
     let concatenatedFile: string;
     if (rangeParts.length === 1) {
       concatenatedFile = rangeParts[0];
@@ -104,27 +118,19 @@ export async function processVideo(
       ]);
     }
 
-    // Calculate total selected duration and speed factor
+    // Speed adjust
     const totalSelected = ranges.reduce((sum, r) => sum + (r.end - r.start), 0);
     const speedFactor = totalSelected / segDuration;
     const outputName = `seg${i}.mp4`;
 
     if (Math.abs(speedFactor - 1) < 0.05) {
-      // Close enough, just rename/copy
-      await ff.exec([
-        '-i', concatenatedFile,
-        '-c', 'copy',
-        '-y', outputName,
-      ]);
+      await ff.exec(['-i', concatenatedFile, '-c', 'copy', '-y', outputName]);
     } else {
-      // Speed adjust using setpts
       const setptsValue = (1 / speedFactor).toFixed(4);
       await ff.exec([
         '-i', concatenatedFile,
         '-vf', `setpts=${setptsValue}*PTS`,
-        '-an',
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
+        '-an', '-c:v', 'libx264', '-preset', 'ultrafast',
         '-y', outputName,
       ]);
     }
@@ -133,32 +139,26 @@ export async function processVideo(
     onProgress(36 + i * 7);
   }
 
-  // Create final concat file
+  // Final concat
   const concatContent = segmentFiles.map(f => `file '${f}'`).join('\n');
   await ff.writeFile('concat.txt', concatContent);
 
-  // Concatenate all segments
   await ff.exec([
-    '-f', 'concat',
-    '-safe', '0',
-    '-i', 'concat.txt',
-    '-c', 'copy',
+    '-f', 'concat', '-safe', '0',
+    '-i', 'concat.txt', '-c', 'copy',
     '-y', 'video_only.mp4',
   ]);
   onProgress(85);
 
-  // Add voiceover audio
+  // Add voiceover
   await ff.exec([
     '-i', 'video_only.mp4',
     '-i', 'voiceover.mp3',
-    '-c:v', 'copy',
-    '-c:a', 'aac',
-    '-shortest',
-    '-y', 'output.mp4',
+    '-c:v', 'copy', '-c:a', 'aac',
+    '-shortest', '-y', 'output.mp4',
   ]);
   onProgress(95);
 
-  // Read output
   const data = await ff.readFile('output.mp4');
   const uint8 = data as Uint8Array;
   const blob = new Blob([uint8.buffer as ArrayBuffer], { type: 'video/mp4' });
