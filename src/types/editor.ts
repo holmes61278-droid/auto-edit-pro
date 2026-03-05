@@ -12,8 +12,10 @@ export interface ProductClip {
   file: File;
   url: string;
   duration: number;
-  index: number; // 0-4
+  index: number; // 0-6 (hook=0, products=1-5, cta=6)
   thumbnail?: string;
+  trimStart: number; // manual trim start in seconds
+  trimEnd: number; // manual trim end in seconds
 }
 
 export interface EditorState {
@@ -26,6 +28,8 @@ export interface EditorState {
   progress: number;
   outputUrl: string | null;
 }
+
+export const CLIP_LABELS = ['Hook', 'Product 1', 'Product 2', 'Product 3', 'Product 4', 'Product 5', 'CTA'];
 
 export const DEFAULT_SEGMENTS: Omit<Segment, 'startTime' | 'endTime'>[] = [
   { id: 'hook', label: 'Hook', type: 'hook' },

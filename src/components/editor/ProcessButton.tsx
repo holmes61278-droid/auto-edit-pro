@@ -24,6 +24,7 @@ export function ProcessButton({
   onReset,
 }: ProcessButtonProps) {
   const allClipsUploaded = clips.every(c => c !== null);
+  const uploadedCount = clips.filter(Boolean).length;
   const isReady = voiceover && allClipsUploaded && segments.length === 7;
 
   return (
@@ -93,7 +94,7 @@ export function ProcessButton({
           {!voiceover
             ? 'Upload a voiceover to get started.'
             : !allClipsUploaded
-            ? `Upload all 5 product clips (${clips.filter(Boolean).length}/5 uploaded).`
+            ? `Upload and trim all 7 clips (${uploadedCount}/7 done).`
             : 'Adjust the timeline segments above, then generate.'}
         </p>
       )}
