@@ -10,6 +10,7 @@ export interface Segment {
 export interface TrimRange {
   start: number;
   end: number;
+  sourceIndex?: number; // for hook/cta: which product video (0-4) this range comes from
 }
 
 export interface ProductClip {

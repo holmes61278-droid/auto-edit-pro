@@ -1,5 +1,5 @@
-import { useCallback, useRef, useState } from 'react';
-import { Film, Check, X, Scissors } from 'lucide-react';
+import { useCallback, useRef, useState, useEffect, useMemo } from 'react';
+import { Film, Check, X, Scissors, Link } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ProductClip, CLIP_LABELS, Segment, TrimRange } from '@/types/editor';
 import { VideoTrimmer } from './VideoTrimmer';
@@ -12,6 +12,10 @@ interface VideoUploadProps {
 }
 
 export function VideoUpload({ clips, segments, onUpload, onUpdateTrimRanges }: VideoUploadProps) {
+  // Get product clips (indices 1-5)
+  const productClips = clips.slice(1, 6);
+  const allProductsUploaded = productClips.every(c => c !== null);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -20,14 +24,17 @@ export function VideoUpload({ clips, segments, onUpload, onUpdateTrimRanges }: V
       className="space-y-3"
     >
       <h3 className="text-sm font-mono font-semibold text-muted-foreground uppercase tracking-wider">
-        Step 2 — Video Clips (one per segment)
+        Step 2 — Video Clips
       </h3>
-      <div className="grid grid-cols-7 gap-2">
-        {CLIP_LABELS.map((label, i) => (
+
+      {/* Product slots (1-5) */}
+      <p className="text-[11px] font-mono text-muted-foreground">Upload 5 product videos — Hook & CTA will auto-fill from these.</p>
+      <div className="grid grid-cols-5 gap-2">
+        {[1, 2, 3, 4, 5].map(i => (
           <ClipSlot
             key={i}
             index={i}
-            label={label}
+            label={CLIP_LABELS[i]}
             clip={clips[i] ?? null}
             segment={segments?.[i]}
             onUpload={onUpload}
@@ -35,10 +42,159 @@ export function VideoUpload({ clips, segments, onUpload, onUpdateTrimRanges }: V
           />
         ))}
       </div>
+
+      {/* Hook & CTA (auto-populated) */}
+      <div className="grid grid-cols-2 gap-2">
+        <AutoSlot
+          index={0}
+          label="Hook"
+          clip={clips[0] ?? null}
+          segment={segments?.[0]}
+          productClips={productClips as (ProductClip | null)[]}
+          allProductsUploaded={allProductsUploaded}
+          onUpload={onUpload}
+          onUpdateTrimRanges={onUpdateTrimRanges}
+        />
+        <AutoSlot
+          index={6}
+          label="CTA"
+          clip={clips[6] ?? null}
+          segment={segments?.[6]}
+          productClips={productClips as (ProductClip | null)[]}
+          allProductsUploaded={allProductsUploaded}
+          onUpload={onUpload}
+          onUpdateTrimRanges={onUpdateTrimRanges}
+        />
+      </div>
     </motion.div>
   );
 }
 
+/* ── Auto-populated slot for Hook / CTA ── */
+function AutoSlot({
+  index,
+  label,
+  clip,
+  segment,
+  productClips,
+  allProductsUploaded,
+  onUpload,
+  onUpdateTrimRanges,
+}: {
+  index: number;
+  label: string;
+  clip: ProductClip | null;
+  segment: Segment | undefined;
+  productClips: (ProductClip | null)[];
+  allProductsUploaded: boolean;
+  onUpload: (index: number, clip: ProductClip | null) => void;
+  onUpdateTrimRanges: (index: number, trimRanges: TrimRange[]) => void;
+}) {
+  const [showTrimmer, setShowTrimmer] = useState(false);
+  const segmentDuration = segment ? segment.endTime - segment.startTime : 0;
+
+  const validProducts = useMemo(
+    () => productClips.filter((c): c is ProductClip => c !== null),
+    [productClips]
+  );
+
+  // Auto-create clip entry when all products uploaded (but no trim yet)
+  useEffect(() => {
+    if (allProductsUploaded && !clip) {
+      onUpload(index, {
+        id: `clip-${index}`,
+        file: validProducts[0].file, // placeholder, actual sources come from trimRanges.sourceIndex
+        url: validProducts[0].url,
+        duration: 0,
+        index,
+        trimRanges: [],
+      });
+    }
+  }, [allProductsUploaded, clip, index, validProducts, onUpload]);
+
+  const handleTrimConfirm = useCallback((trimRanges: TrimRange[]) => {
+    const totalSelected = trimRanges.reduce((s, r) => s + (r.end - r.start), 0);
+    onUpload(index, {
+      id: `clip-${index}`,
+      file: validProducts[0].file,
+      url: validProducts[0].url,
+      duration: totalSelected,
+      index,
+      trimRanges,
+    });
+    setShowTrimmer(false);
+  }, [index, onUpload, validProducts]);
+
+  const totalTrimmed = clip?.trimRanges ? clip.trimRanges.reduce((s, r) => s + (r.end - r.start), 0) : 0;
+
+  return (
+    <>
+      <div
+        onClick={() => allProductsUploaded && setShowTrimmer(true)}
+        className={`relative rounded-md border-2 border-dashed transition-all overflow-hidden p-3 ${
+          !allProductsUploaded
+            ? 'border-border bg-muted/20 opacity-50 cursor-not-allowed'
+            : clip?.trimRanges?.length
+            ? 'border-primary/30 bg-primary/5 cursor-pointer'
+            : 'border-border hover:border-primary/40 hover:bg-secondary/30 cursor-pointer'
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-secondary">
+            <Link className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-mono font-semibold text-foreground">{label}</p>
+            {!allProductsUploaded ? (
+              <p className="text-[10px] font-mono text-muted-foreground">Upload all 5 products first</p>
+            ) : clip?.trimRanges?.length ? (
+              <p className="text-[10px] font-mono text-muted-foreground">
+                {clip.trimRanges.length} cut{clip.trimRanges.length > 1 ? 's' : ''} · {totalTrimmed.toFixed(1)}s
+                {segmentDuration > 0 && <span className="text-primary ml-1">→ {segmentDuration.toFixed(1)}s</span>}
+              </p>
+            ) : (
+              <p className="text-[10px] font-mono text-primary">Click to trim from products · {segmentDuration.toFixed(1)}s needed</p>
+            )}
+          </div>
+          {clip?.trimRanges?.length ? (
+            <div className="flex items-center gap-1">
+              <Check className="h-3.5 w-3.5 text-primary" />
+              <button
+                onClick={e => { e.stopPropagation(); setShowTrimmer(true); }}
+                className="flex items-center gap-0.5 rounded bg-secondary/80 px-1.5 py-0.5 text-[8px] font-mono text-secondary-foreground hover:bg-secondary transition-colors"
+              >
+                <Scissors className="h-2.5 w-2.5" /> Retrim
+              </button>
+            </div>
+          ) : allProductsUploaded ? (
+            <Scissors className="h-3.5 w-3.5 text-muted-foreground" />
+          ) : null}
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {showTrimmer && allProductsUploaded && (
+          <VideoTrimmer
+            videoUrl={validProducts[0].url}
+            videoDuration={validProducts[0].duration}
+            initialRanges={clip?.trimRanges ?? []}
+            segmentDuration={segmentDuration}
+            label={label}
+            onConfirm={handleTrimConfirm}
+            onCancel={() => setShowTrimmer(false)}
+            multiSource={validProducts.map((p, i) => ({
+              url: p.url,
+              duration: p.duration,
+              label: `Product ${i + 1}`,
+            }))}
+          />
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
+/* ── Standard clip slot for Products ── */
 function ClipSlot({
   index,
   label,

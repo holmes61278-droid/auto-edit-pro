@@ -23,9 +23,9 @@ export function ProcessButton({
   onProcess,
   onReset,
 }: ProcessButtonProps) {
-  const allClipsUploaded = clips.every(c => c !== null);
-  const uploadedCount = clips.filter(Boolean).length;
-  const isReady = voiceover && allClipsUploaded && segments.length === 7;
+  const allClipsReady = clips.every(c => c !== null && c.trimRanges.length > 0);
+  const readyCount = clips.filter(c => c !== null && c.trimRanges.length > 0).length;
+  const isReady = voiceover && allClipsReady && segments.length === 7;
 
   return (
     <motion.div
@@ -93,8 +93,8 @@ export function ProcessButton({
         <p className="text-[11px] text-muted-foreground">
           {!voiceover
             ? 'Upload a voiceover to get started.'
-            : !allClipsUploaded
-            ? `Upload and trim all 7 clips (${uploadedCount}/7 done).`
+            : !allClipsReady
+            ? `Upload and trim all 7 clips (${readyCount}/7 done).`
             : 'Adjust the timeline segments above, then generate.'}
         </p>
       )}
