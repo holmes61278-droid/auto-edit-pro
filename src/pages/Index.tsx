@@ -15,6 +15,7 @@ const Index = () => {
     state,
     setVoiceover,
     setProductClip,
+    updateClipTrim,
     updateSegment,
     setProcessing,
     setProgress,
@@ -25,7 +26,7 @@ const Index = () => {
   const handleProcess = useCallback(async () => {
     if (!state.voiceover) return;
     const clips = state.productClips.filter(Boolean) as ProductClip[];
-    if (clips.length !== 5) return;
+    if (clips.length !== 7) return;
 
     setProcessing(true, 0);
     try {
@@ -48,7 +49,7 @@ const Index = () => {
     <div className="flex min-h-screen flex-col bg-background">
       <Header />
       <main className="flex-1 p-6">
-        <div className="mx-auto max-w-4xl space-y-6">
+        <div className="mx-auto max-w-5xl space-y-6">
           <AudioUpload
             voiceoverUrl={state.voiceoverUrl}
             voiceoverDuration={state.voiceoverDuration}
@@ -57,7 +58,9 @@ const Index = () => {
 
           <VideoUpload
             clips={state.productClips}
+            segments={state.segments}
             onUpload={setProductClip}
+            onUpdateTrim={updateClipTrim}
           />
 
           <Timeline

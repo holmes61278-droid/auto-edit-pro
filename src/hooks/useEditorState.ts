@@ -5,7 +5,7 @@ const initialState: EditorState = {
   voiceover: null,
   voiceoverUrl: null,
   voiceoverDuration: 0,
-  productClips: [null, null, null, null, null],
+  productClips: [null, null, null, null, null, null, null], // 7 slots: hook + 5 products + CTA
   segments: [],
   isProcessing: false,
   progress: 0,
@@ -16,7 +16,6 @@ export function useEditorState() {
   const [state, setState] = useState<EditorState>(initialState);
 
   const setVoiceover = useCallback((file: File, url: string, duration: number) => {
-    // Auto-split into 7 equal segments
     const segmentDuration = duration / 7;
     const segments: Segment[] = DEFAULT_SEGMENTS.map((seg, i) => ({
       ...seg,
@@ -38,6 +37,16 @@ export function useEditorState() {
     setState(prev => {
       const clips = [...prev.productClips];
       clips[index] = clip;
+      return { ...prev, productClips: clips, outputUrl: null };
+    });
+  }, []);
+
+  const updateClipTrim = useCallback((index: number, trimStart: number, trimEnd: number) => {
+    setState(prev => {
+      const clips = [...prev.productClips];
+      const clip = clips[index];
+      if (!clip) return prev;
+      clips[index] = { ...clip, trimStart, trimEnd };
       return { ...prev, productClips: clips, outputUrl: null };
     });
   }, []);
@@ -73,6 +82,7 @@ export function useEditorState() {
     state,
     setVoiceover,
     setProductClip,
+    updateClipTrim,
     updateSegment,
     setProcessing,
     setProgress,

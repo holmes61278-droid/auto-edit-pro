@@ -17,24 +17,15 @@ async function getFFmpeg(onProgress?: (p: number) => void): Promise<FFmpeg> {
     console.log('[FFmpeg]', message);
   });
 
-  // Use jsdelivr - much faster and more reliable than unpkg
   const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
 
   try {
     onProgress?.(3);
-    console.log('[FFmpeg] Downloading core JS...');
     const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript');
-    
     onProgress?.(5);
-    console.log('[FFmpeg] Downloading WASM (this may take a moment on first use)...');
     const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm');
-    
     onProgress?.(9);
-    console.log('[FFmpeg] Initializing engine...');
-    
     await instance.load({ coreURL, wasmURL });
-    
-    console.log('[FFmpeg] Engine ready!');
     ffmpeg = instance;
     return instance;
   } catch (err) {
@@ -61,45 +52,58 @@ export async function processVideo(
   await ff.writeFile('voiceover.mp3', await fetchFile(voiceover));
   onProgress(15);
 
-  // Write all product clips
+  // Write all 7 clips
   for (let i = 0; i < clips.length; i++) {
     await ff.writeFile(`clip${i}.mp4`, await fetchFile(clips[i].file));
-    onProgress(15 + (i + 1) * 5);
+    onProgress(15 + (i + 1) * 3);
   }
 
-  // For each segment, extract the matching portion from the corresponding clip
-  // Hook & CTA use all clips mixed; product segments use specific clip
+  // For each segment, extract the trimmed portion from its corresponding clip
   const segmentFiles: string[] = [];
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
     const segDuration = seg.endTime - seg.startTime;
+    const clip = clips[i]; // Each segment now has its own clip (index 0-6)
     const outputName = `seg${i}.mp4`;
 
-    let clipIndex: number;
-    if (seg.type === 'hook') {
-      clipIndex = 0; // Use first clip for hook
-    } else if (seg.type === 'cta') {
-      clipIndex = 4; // Use last clip for CTA
+    // Use the manual trim values from the clip
+    const trimStart = clip.trimStart;
+    const trimDuration = clip.trimEnd - clip.trimStart;
+
+    // Extract the trimmed portion, then speed-adjust to fit the segment duration
+    // If trimmed portion differs from segment duration, we adjust speed
+    const speedFactor = trimDuration / segDuration;
+
+    if (Math.abs(speedFactor - 1) < 0.05) {
+      // Close enough to 1:1, just cut directly
+      await ff.exec([
+        '-ss', trimStart.toFixed(3),
+        '-i', `clip${i}.mp4`,
+        '-t', segDuration.toFixed(3),
+        '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
+        '-an',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-y', outputName,
+      ]);
     } else {
-      clipIndex = seg.productIndex ?? 0;
+      // Speed adjust: setpts to fit trimmed content into segment duration
+      const setptsValue = (1 / speedFactor).toFixed(4);
+      await ff.exec([
+        '-ss', trimStart.toFixed(3),
+        '-i', `clip${i}.mp4`,
+        '-t', trimDuration.toFixed(3),
+        '-vf', `setpts=${setptsValue}*PTS,scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2`,
+        '-an',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-y', outputName,
+      ]);
     }
 
-    const clipFile = `clip${clipIndex}.mp4`;
-
-    // Extract segment from clip, scaled to 1080x1920 (vertical) or auto
-    await ff.exec([
-      '-i', clipFile,
-      '-t', segDuration.toFixed(3),
-      '-vf', 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2',
-      '-an', // Remove audio, we'll add voiceover
-      '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-y', outputName,
-    ]);
-
     segmentFiles.push(outputName);
-    onProgress(40 + i * 7);
+    onProgress(36 + i * 7);
   }
 
   // Create concat file
